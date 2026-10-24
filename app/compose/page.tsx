@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { templates, TemplateMeta, TemplateId } from '@/lib/templates-registry';
+import type { AbandonedCart } from '@/app/api/abandoned-carts/route';
 
 // Dynamic import helper for template renderer (runs in browser via API)
 async function renderEmailHtml(templateId: TemplateId, fields: Record<string, string>): Promise<string> {
@@ -102,6 +103,96 @@ function ItemsListEditor({
   );
 }
 
+// ── Abandoned Cart Picker ──────────────────────────────────
+// Per-customer fields filled from their cart; everything else in the form is shared.
+function cartFields(cart: AbandonedCart): Record<string, string> {
+  return {
+    to: cart.email,
+    customerName: cart.name,
+    // Same "Name | Size | Qty | Price" format the ItemsListEditor serializes to
+    items: cart.items.map(i => `${i.name.replace(/\|/g, '/')} | ${i.size} | ${i.qty} | ${i.price}`).join('\n'),
+  };
+}
+
+function timeAgo(iso: string): string {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  if (days <= 0) return 'today';
+  if (days === 1) return '1 day ago';
+  return `${days} days ago`;
+}
+
+function AbandonedCartPicker({
+  carts,
+  loading,
+  error,
+  selectedIds,
+  activeId,
+  onToggle,
+  onToggleAll,
+  onActivate,
+  onRefresh,
+}: {
+  carts: AbandonedCart[];
+  loading: boolean;
+  error: string;
+  selectedIds: Set<string>;
+  activeId: string | null;
+  onToggle: (id: string) => void;
+  onToggleAll: () => void;
+  onActivate: (cart: AbandonedCart) => void;
+  onRefresh: () => void;
+}) {
+  const allSelected = carts.length > 0 && carts.every(c => selectedIds.has(c.userId));
+
+  return (
+    <div className="cart-picker">
+      <div className="cart-picker-toolbar">
+        <label>
+          <input type="checkbox" checked={allSelected} onChange={onToggleAll} disabled={!carts.length} />
+          {selectedIds.size} of {carts.length} selected
+        </label>
+        <button className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={onRefresh} disabled={loading}>
+          {loading ? 'Loading…' : '↻ Refresh'}
+        </button>
+      </div>
+
+      {error ? (
+        <div className="cart-picker-empty" style={{ color: 'var(--red)' }}>{error}</div>
+      ) : !loading && carts.length === 0 ? (
+        <div className="cart-picker-empty">No customers have items in their cart right now.</div>
+      ) : (
+        <div className="cart-picker-list">
+          {carts.map(cart => (
+            <div
+              key={cart.userId}
+              className={`cart-row ${activeId === cart.userId ? 'active' : ''}`}
+              onClick={() => onActivate(cart)}
+              title="Click to preview this customer's email"
+            >
+              <input
+                type="checkbox"
+                checked={selectedIds.has(cart.userId)}
+                onClick={e => e.stopPropagation()}
+                onChange={() => onToggle(cart.userId)}
+              />
+              <div className="cart-row-main">
+                <div className="cart-row-top">
+                  <span>{cart.name}</span>
+                  <span>₹{cart.total.toLocaleString('en-IN')}</span>
+                </div>
+                <div className="cart-row-email">{cart.email} · updated {timeAgo(cart.updatedAt)}</div>
+                <div className="cart-row-items">
+                  {cart.items.map(i => `${i.name}${i.size ? ` (${i.size})` : ''} ×${i.qty}${i.isOutOfStock ? ' [out of stock]' : ''}`).join(', ')}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Toast ──────────────────────────────────────────────────
 function Toast({ message, type, onDismiss }: { message: string; type: 'success' | 'error'; onDismiss: () => void }) {
   useEffect(() => {
@@ -133,7 +224,17 @@ function ComposeInner() {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Abandoned cart recipients (only used by the abandoned-cart template)
+  const [carts, setCarts] = useState<AbandonedCart[]>([]);
+  const [cartsLoading, setCartsLoading] = useState(false);
+  const [cartsError, setCartsError] = useState('');
+  const [selectedCartIds, setSelectedCartIds] = useState<Set<string>>(new Set());
+  const [activeCartId, setActiveCartId] = useState<string | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+
   const selectedTemplate = templates.find(t => t.id === selectedTemplateId)!;
+  const isCartTemplate = selectedTemplateId === 'abandoned-cart';
+  const isBulk = isCartTemplate && selectedCartIds.size > 0;
 
   const addToast = (message: string, type: 'success' | 'error') => {
     const id = Date.now();
@@ -147,7 +248,50 @@ function ComposeInner() {
     setFields({});
     setSubject(selectedTemplate.defaultSubject);
     setPreviewHtml('');
+    setSelectedCartIds(new Set());
+    setActiveCartId(null);
   }, [selectedTemplateId]);
+
+  const loadCarts = useCallback(async () => {
+    setCartsLoading(true);
+    setCartsError('');
+    try {
+      const res = await fetch('/api/abandoned-carts');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load carts');
+      setCarts(data.carts);
+      // Drop selections for customers who no longer have a cart
+      const ids = new Set<string>(data.carts.map((c: AbandonedCart) => c.userId));
+      setSelectedCartIds(prev => new Set(Array.from(prev).filter(id => ids.has(id))));
+    } catch (err: any) {
+      setCartsError(err.message || 'Failed to load carts');
+    } finally {
+      setCartsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isCartTemplate) loadCarts();
+  }, [isCartTemplate, loadCarts]);
+
+  const toggleCart = (id: string) => {
+    setSelectedCartIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllCarts = () => {
+    setSelectedCartIds(prev =>
+      carts.every(c => prev.has(c.userId)) ? new Set() : new Set(carts.map(c => c.userId))
+    );
+  };
+
+  const activateCart = (cart: AbandonedCart) => {
+    setActiveCartId(cart.userId);
+    setFields(prev => ({ ...prev, ...cartFields(cart) }));
+  };
 
   // Debounced preview refresh
   const refreshPreview = useCallback(async () => {
@@ -204,8 +348,56 @@ function ComposeInner() {
     }
   };
 
+  // Renders and sends one personalised email per selected cart, sequentially
+  // (keeps us well under Gmail's SMTP rate limits).
+  const handleBulkSend = async () => {
+    const recipients = carts.filter(c => selectedCartIds.has(c.userId));
+    if (!recipients.length) return;
+    if (!subject) { addToast('Please enter a subject line.', 'error'); return; }
+    if (!window.confirm(`Send the abandoned cart email to ${recipients.length} customer${recipients.length > 1 ? 's' : ''}?`)) return;
+
+    setSending(true);
+    setBulkProgress({ done: 0, total: recipients.length });
+    const failed: string[] = [];
+
+    for (let idx = 0; idx < recipients.length; idx++) {
+      const cart = recipients[idx];
+      try {
+        const previewRes = await fetch('/api/preview', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ templateId: selectedTemplateId, fields: { ...fields, ...cartFields(cart) } }),
+        });
+        if (!previewRes.ok) throw new Error('Render failed');
+        const { html } = await previewRes.json();
+
+        const res = await fetch('/api/send-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: cart.email,
+            subject: subject.replace(/\[CUSTOMER_NAME\]/g, cart.name),
+            html,
+          }),
+        });
+        if (!res.ok) throw new Error('Send failed');
+      } catch {
+        failed.push(cart.email);
+      }
+      setBulkProgress({ done: idx + 1, total: recipients.length });
+    }
+
+    const sent = recipients.length - failed.length;
+    if (sent) addToast(`✅ Sent ${sent} of ${recipients.length} emails.`, 'success');
+    if (failed.length) addToast(`Failed for: ${failed.join(', ')}`, 'error');
+    // Keep only the failures selected so they can be retried
+    setSelectedCartIds(new Set(recipients.filter(c => failed.includes(c.email)).map(c => c.userId)));
+    setBulkProgress(null);
+    setSending(false);
+  };
+
   const isItemsField = (key: string) => key === 'items';
-  const hasPrice = selectedTemplateId === 'order-confirmed';
+  const hasPrice = selectedTemplateId === 'order-confirmed' || selectedTemplateId === 'abandoned-cart' || selectedTemplateId === 'whatsapp-abandoned-cart';
 
   return (
     <div>
@@ -250,6 +442,31 @@ function ComposeInner() {
             </div>
             <hr className="divider" />
 
+            {isCartTemplate && (
+              <>
+                <div>
+                  <div className="section-label">Customers with Items in Cart</div>
+                  <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: '0 0 8px' }}>
+                    Tick customers to email them in bulk; click a row to preview their email. Name, email and items are
+                    filled from each customer&apos;s cart, and every other field below applies to all of them.
+                    Use [CUSTOMER_NAME] in the subject to personalise it.
+                  </p>
+                  <AbandonedCartPicker
+                    carts={carts}
+                    loading={cartsLoading}
+                    error={cartsError}
+                    selectedIds={selectedCartIds}
+                    activeId={activeCartId}
+                    onToggle={toggleCart}
+                    onToggleAll={toggleAllCarts}
+                    onActivate={activateCart}
+                    onRefresh={loadCarts}
+                  />
+                </div>
+                <hr className="divider" />
+              </>
+            )}
+
             {selectedTemplate.sections.map((section, si) => (
               <div key={si}>
                 <div className="section-label">{section.title}</div>
@@ -261,6 +478,7 @@ function ComposeInner() {
                     {field.hint && <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: '-2px 0 2px' }}>{field.hint}</p>}
                     {isItemsField(field.key) ? (
                       <ItemsListEditor
+                        key={activeCartId ?? 'manual'}
                         value={fields[field.key] || ''}
                         onChange={v => setField(field.key, v)}
                         withPrice={hasPrice}
@@ -307,20 +525,20 @@ function ComposeInner() {
           <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border)' }}>
             <button
               className="btn btn-primary send-btn"
-              onClick={handleSend}
-              disabled={sending || !fields.to}
+              onClick={isBulk ? handleBulkSend : handleSend}
+              disabled={sending || (!isBulk && !fields.to)}
               id="send-email-btn"
             >
               {sending ? (
                 <>
-                  <span className="spinner" /> Sending...
+                  <span className="spinner" /> {bulkProgress ? `Sending ${bulkProgress.done}/${bulkProgress.total}...` : 'Sending...'}
                 </>
               ) : (
                 <>
                   <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                     <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
                   </svg>
-                  Send Email
+                  {isBulk ? `Send to ${selectedCartIds.size} Customer${selectedCartIds.size > 1 ? 's' : ''}` : 'Send Email'}
                 </>
               )}
             </button>

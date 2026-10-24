@@ -8,7 +8,9 @@ export type TemplateId =
   | 'order-cancelled'
   | 'offer-announcement'
   | 'policy-update'
-  | 'general-announcement';
+  | 'general-announcement'
+  | 'abandoned-cart'
+  | 'whatsapp-abandoned-cart';
 
 export interface TemplateField {
   key: string;
@@ -275,6 +277,58 @@ export const templates: TemplateMeta[] = [
           { key: 'ctaText', label: 'Button Text (optional)', type: 'text', placeholder: 'Explore Now' },
           { key: 'ctaLink', label: 'Button Link (optional)', type: 'text', placeholder: 'https://houseofspandana.com' },
           { key: 'closingNote', label: 'Closing Note (optional)', type: 'textarea', placeholder: 'With love,\nThe House of Spandana Team' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'abandoned-cart',
+    name: 'Abandoned Cart',
+    description: 'Send to customers who left items in their cart without checking out.',
+    category: 'marketing',
+    emoji: '🛒',
+    defaultSubject: 'Did you forget something, [CUSTOMER_NAME]?',
+    sections: [
+      {
+        title: 'Recipient',
+        fields: [
+          { key: 'to', label: 'To (Email)', type: 'email', placeholder: 'customer@email.com', required: true },
+          { key: 'customerName', label: 'Customer Name', type: 'text', placeholder: 'Priya Sharma', required: true },
+        ],
+      },
+      {
+        title: 'Cart Details',
+        fields: [
+          { key: 'cartUrl', label: 'Cart / Checkout URL', type: 'text', placeholder: 'https://...', required: true },
+          { key: 'items', label: 'Items in Cart', type: 'items-list', required: true, hint: 'Format: Name | Size | Qty | Price' },
+          { key: 'discountCode', label: 'Discount Code (optional)', type: 'text', placeholder: 'COMEBACK10' },
+          { key: 'notes', label: 'Extra Note (optional)', type: 'textarea', placeholder: 'e.g. Your items are selling fast!' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'whatsapp-abandoned-cart',
+    name: 'WhatsApp Abandoned Cart',
+    description: 'Send a quick WhatsApp reminder to customers who left items in their cart.',
+    category: 'marketing',
+    emoji: '💬',
+    defaultSubject: 'WhatsApp Message Template (No Subject Needed)',
+    sections: [
+      {
+        title: 'Recipient',
+        fields: [
+          { key: 'customerName', label: 'Customer Name', type: 'text', placeholder: 'Priya Sharma', required: true },
+          { key: 'phone', label: 'Phone Number (Optional for UI)', type: 'text', placeholder: '+91 98765 43210' },
+        ],
+      },
+      {
+        title: 'Cart Details',
+        fields: [
+          { key: 'cartUrl', label: 'Cart / Checkout URL', type: 'text', placeholder: 'https://...', required: true },
+          { key: 'items', label: 'Items in Cart', type: 'items-list', required: true, hint: 'Format: Name | Size | Qty | Price' },
+          { key: 'discountCode', label: 'Discount Code (optional)', type: 'text', placeholder: 'COMEBACK10' },
+          { key: 'notes', label: 'Extra Note (optional)', type: 'textarea', placeholder: 'e.g. Your items are selling fast!' },
         ],
       },
     ],

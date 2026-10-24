@@ -1,4 +1,4 @@
-// lib/render-template.ts — takes template id + field values and returns HTML string
+  // lib/render-template.ts — takes template id + field values and returns HTML string
 import { TemplateId } from './templates-registry';
 import { orderConfirmedTemplate } from '@/templates/order-confirmed';
 import { orderProcessingTemplate } from '@/templates/order-processing';
@@ -8,6 +8,8 @@ import { orderCancelledTemplate } from '@/templates/order-cancelled';
 import { offerAnnouncementTemplate } from '@/templates/offer-announcement';
 import { policyUpdateTemplate } from '@/templates/policy-update';
 import { generalAnnouncementTemplate } from '@/templates/general-announcement';
+import { abandonedCartTemplate } from '@/templates/abandoned-cart';
+import { whatsappAbandonedCartTemplate } from '@/templates/whatsapp-abandoned-cart';
 
 function parseItems(raw: string) {
   // Each item line: "Name | Size | Qty | Price"
@@ -107,7 +109,7 @@ export function renderTemplate(templateId: TemplateId, fields: Record<string, st
         greetingMessage: fields.greetingMessage || "As a valued customer of House of Spandana, we're delighted to bring you this exclusive offer.",
         discountMessage: fields.discountMessage || (fields.discountCode ? `Simply apply code <strong>${fields.discountCode}</strong> at checkout.` : 'No code needed — discount applies automatically.'),
         ctaText: fields.ctaText || 'Shop Now',
-        ctaLink: fields.ctaLink || 'https://houseofspandana.com',
+        ctaLink: fields.ctaLink || 'https://houseofspandana.in',
         termsAndConditions: fields.termsAndConditions,
       });
 
@@ -133,6 +135,24 @@ export function renderTemplate(templateId: TemplateId, fields: Record<string, st
         ctaLink: fields.ctaLink,
         closingNote: fields.closingNote,
         emoji: fields.emoji,
+      });
+
+    case 'abandoned-cart':
+      return abandonedCartTemplate({
+        customerName: fields.customerName || 'Valued Customer',
+        cartUrl: fields.cartUrl || 'https://houseofspandana.in/cart',
+        items: parseItems(fields.items),
+        discountCode: fields.discountCode,
+        notes: fields.notes,
+      });
+
+    case 'whatsapp-abandoned-cart':
+      return whatsappAbandonedCartTemplate({
+        customerName: fields.customerName || 'Valued Customer',
+        cartUrl: fields.cartUrl || 'https://houseofspandana.in/cart',
+        items: parseItems(fields.items),
+        discountCode: fields.discountCode,
+        notes: fields.notes,
       });
 
     default:
